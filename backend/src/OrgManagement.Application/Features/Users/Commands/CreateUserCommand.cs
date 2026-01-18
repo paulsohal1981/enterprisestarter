@@ -17,7 +17,8 @@ public record CreateUserCommand(
     string? PhoneNumber,
     Guid OrganizationId,
     Guid? SubOrganizationId,
-    IEnumerable<Guid> RoleIds) : IRequest<Result<Guid>>;
+    IEnumerable<Guid> RoleIds,
+    string? Password = null) : IRequest<Result<Guid>>;
 
 public class CreateUserCommandHandler : IRequestHandler<CreateUserCommand, Result<Guid>>
 {
@@ -73,9 +74,11 @@ public class CreateUserCommandHandler : IRequestHandler<CreateUserCommand, Resul
             }
         }
 
-        // Generate temporary password
-        var temporaryPassword = _passwordService.GenerateRandomPassword();
-        var passwordHash = _passwordService.HashPassword(temporaryPassword);
+        // Use provided password or generate temporary one
+        var password = string.IsNullOrWhiteSpace(request.Password)
+            ? _passwordService.GenerateRandomPassword()
+            : request.Password;
+        var passwordHash = _passwordService.HashPassword(password);
 
         var user = User.Create(
             request.Email,
@@ -100,8 +103,11 @@ public class CreateUserCommandHandler : IRequestHandler<CreateUserCommand, Resul
         await _context.Users.AddAsync(user, cancellationToken);
         await _context.SaveChangesAsync(cancellationToken);
 
-        // Send welcome email with temporary password
-        await _emailService.SendWelcomeEmailAsync(user.Email, temporaryPassword, cancellationToken);
+        // Send welcome email with password only if it was auto-generated
+        if (string.IsNullOrWhiteSpace(request.Password))
+        {
+            await _emailService.SendWelcomeEmailAsync(user.Email, password, cancellationToken);
+        }
 
         await _auditService.LogAsync(
             nameof(User),
@@ -139,5 +145,13 @@ public class CreateUserCommandValidator : AbstractValidator<CreateUserCommand>
 
         RuleFor(x => x.RoleIds)
             .NotEmpty().WithMessage("At least one role must be assigned.");
+
+        RuleFor(x => x.Password)
+            .MinimumLength(8).WithMessage("Password must be at least 8 characters.")
+            .Matches("[A-Z]").WithMessage("Password must contain at least one uppercase letter.")
+            .Matches("[a-z]").WithMessage("Password must contain at least one lowercase letter.")
+            .Matches("[0-9]").WithMessage("Password must contain at least one number.")
+            .Matches("[^a-zA-Z0-9]").WithMessage("Password must contain at least one special character.")
+            .When(x => !string.IsNullOrWhiteSpace(x.Password));
     }
 }

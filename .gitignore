@@ -42,3 +42,5 @@ coverage/
 
 # Docker
 docker-compose.override.yml
+
+.fake
